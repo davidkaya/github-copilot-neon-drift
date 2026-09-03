@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Neon Drift</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <main class="game-shell">
+        <header class="topbar">
+            <div class="brand" aria-label="Neon Drift">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span>NEON DRIFT</span>
+            </div>
+            <div class="top-actions">
+                <button id="pauseButton" class="icon-button" type="button" aria-label="Pause game" title="Pause (P)">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6v12M16 6v12"/></svg>
+                </button>
+                <button id="restartButton" class="icon-button" type="button" aria-label="Restart game" title="Restart (R)">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18.5 8A7 7 0 1 0 19 15M18.5 8V3.5M18.5 8H14"/></svg>
+                </button>
+                <button id="soundButton" class="icon-button" type="button" aria-label="Mute sound" title="Sound (M)">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 17.5a3 3 0 1 1-2-2.83V7l10-2v10.5a3 3 0 1 1-2-2.83V8L9 9.2Z"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <section class="playfield" aria-label="Neon Drift game">
+            <canvas id="gameCanvas" tabindex="0" aria-label="Game area. Move left and right to dodge hazards and collect data shards.">
+                Neon Drift requires canvas support.
+            </canvas>
+
+            <div class="hud" aria-hidden="true">
+                <div class="metric metric-score">
+                    <span class="metric-label">SCORE</span>
+                    <strong id="scoreValue">000000</strong>
+                </div>
+                <div class="metric metric-combo">
+                    <span class="metric-label">SYNC</span>
+                    <strong id="comboValue">×1</strong>
+                    <span id="comboBar" class="combo-bar"><i></i></span>
+                </div>
+                <div class="metric metric-best">
+                    <span class="metric-label">BEST</span>
+                    <strong id="bestValue">000000</strong>
+                </div>
+            </div>
+
+            <div id="pickupStatus" class="pickup-status" aria-live="polite"></div>
+            <div id="announcement" class="sr-only" aria-live="polite"></div>
+
+            <div id="introPanel" class="panel intro-panel">
+                <div class="eyebrow">COURIER LINK READY</div>
+                <h1>Thread the impossible.</h1>
+                <p>Drift through the tunnel, dodge red hazards, and chain cyan data shards before your sync fades.</p>
+                <div class="instruction-grid">
+                    <div><kbd>←</kbd><kbd>→</kbd><span>or A / D</span></div>
+                    <div><span class="pointer-icon" aria-hidden="true"></span><span>drag or point</span></div>
+                    <div><span class="touch-icon" aria-hidden="true">◇</span><span>touch controls</span></div>
+                </div>
+                <fieldset class="difficulty-picker">
+                    <legend>Signal intensity</legend>
+                    <label><input type="radio" name="difficulty" value="relaxed"><span>Relaxed</span></label>
+                    <label><input type="radio" name="difficulty" value="standard" checked><span>Standard</span></label>
+                    <label><input type="radio" name="difficulty" value="overdrive"><span>Overdrive</span></label>
+                </fieldset>
+                <button id="startButton" class="primary-button" type="button">
+                    <span>START RUN</span>
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 5 7 7-7 7"/></svg>
+                </button>
+                <p class="microcopy">Shield nodes absorb one hit. Time coils briefly slow the tunnel.</p>
+            </div>
+
+            <div id="pausePanel" class="panel compact-panel hidden">
+                <div class="eyebrow">LINK SUSPENDED</div>
+                <h2>Paused</h2>
+                <button id="resumeButton" class="primary-button" type="button">RESUME</button>
+                <span class="key-hint">Press P or Space</span>
+            </div>
+
+            <div id="gameOverPanel" class="panel compact-panel hidden">
+                <div class="eyebrow danger">SIGNAL LOST</div>
+                <h2>Run terminated</h2>
+                <div class="result-grid">
+                    <div><span>Score</span><strong id="finalScore">0</strong></div>
+                    <div><span>Best sync</span><strong id="finalCombo">×1</strong></div>
+                </div>
+                <button id="retryButton" class="primary-button" type="button">
+                    <span>RUN IT BACK</span><kbd aria-hidden="true">R</kbd>
+                </button>
+            </div>
+
+            <div class="touch-controls" aria-label="Touch steering controls">
+                <button id="touchLeft" type="button" aria-label="Move left">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg>
+                </button>
+                <button id="touchRight" type="button" aria-label="Move right">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>
+                </button>
+            </div>
+        </section>
+
+        <footer class="statusbar">
+            <span id="connectionLabel"><i class="status-dot"></i><b id="difficultyLabel">STANDARD</b> CHANNEL</span>
+            <span id="speedLabel">1.0× VELOCITY</span>
+            <span class="desktop-hint">P pause · R restart · M sound</span>
+        </footer>
+    </main>
+    <script type="module" src="/game.js"></script>
+</body>
+</html>
