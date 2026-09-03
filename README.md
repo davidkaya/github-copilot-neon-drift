@@ -2,6 +2,8 @@
 
 A fast neon arcade game built as a GitHub Copilot extension canvas.
 
+Dash through danger, earn Overdrive energy from near misses, and activate a timed double-score burst while a path-aware obstacle planner keeps every red-barrier sequence traversable.
+
 ## Install
 
 **Use this exact extension-folder URL:**

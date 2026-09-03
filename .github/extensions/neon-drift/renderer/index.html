@@ -48,17 +48,29 @@
                 </div>
             </div>
 
+            <div class="ability-dock" aria-label="Courier abilities">
+                <button id="dashButton" class="ability-button" type="button" aria-label="Dash ready">
+                    <span><b>DASH</b><small>SHIFT</small></span>
+                    <span class="ability-meter"><i id="dashMeter"></i></span>
+                </button>
+                <button id="overdriveButton" class="ability-button overdrive-button" type="button" aria-label="Overdrive charging" disabled>
+                    <span><b id="overdriveLabel">OVERDRIVE</b><small>Q</small></span>
+                    <span class="ability-meter"><i id="overdriveMeter"></i></span>
+                </button>
+            </div>
+
             <div id="pickupStatus" class="pickup-status" aria-live="polite"></div>
             <div id="announcement" class="sr-only" aria-live="polite"></div>
 
             <div id="introPanel" class="panel intro-panel">
                 <div class="eyebrow">COURIER LINK READY</div>
                 <h1>Thread the impossible.</h1>
-                <p>Drift through the tunnel, dodge red hazards, and chain cyan data shards before your sync fades.</p>
+                <p>Drift through a guaranteed path, skim hazards to charge Overdrive, and dash through danger when the route gets tight.</p>
                 <div class="instruction-grid">
-                    <div><kbd>←</kbd><kbd>→</kbd><span>or A / D</span></div>
-                    <div><span class="pointer-icon" aria-hidden="true"></span><span>drag or point</span></div>
-                    <div><span class="touch-icon" aria-hidden="true">◇</span><span>touch controls</span></div>
+                    <div><kbd>←</kbd><kbd>→</kbd><span>A / D · drag · touch</span></div>
+                    <div><kbd>⇧</kbd><span>dash through one threat</span></div>
+                    <div><span class="near-miss-icon" aria-hidden="true"></span><span>skim red to charge</span></div>
+                    <div><kbd>Q</kbd><span>trigger full Overdrive</span></div>
                 </div>
                 <fieldset class="difficulty-picker">
                     <legend>Signal intensity</legend>
@@ -70,7 +82,7 @@
                     <span>START RUN</span>
                     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 5 7 7-7 7"/></svg>
                 </button>
-                <p class="microcopy">Shield nodes absorb one hit. Time coils briefly slow the tunnel.</p>
+                <p class="microcopy">Dash is briefly defensive. Overdrive doubles scoring for a limited burst.</p>
             </div>
 
             <div id="pausePanel" class="panel compact-panel hidden">
@@ -86,6 +98,7 @@
                 <div class="result-grid">
                     <div><span>Score</span><strong id="finalScore">0</strong></div>
                     <div><span>Best sync</span><strong id="finalCombo">×1</strong></div>
+                    <div><span>Near misses</span><strong id="finalNearMisses">0</strong></div>
                 </div>
                 <button id="retryButton" class="primary-button" type="button">
                     <span>RUN IT BACK</span><kbd aria-hidden="true">R</kbd>
@@ -105,7 +118,7 @@
         <footer class="statusbar">
             <span id="connectionLabel"><i class="status-dot"></i><b id="difficultyLabel">STANDARD</b> CHANNEL</span>
             <span id="speedLabel">1.0× VELOCITY</span>
-            <span class="desktop-hint">P pause · R restart · M sound</span>
+            <span class="desktop-hint">Shift dash · Q Overdrive · P pause · R restart</span>
         </footer>
     </main>
     <script type="module" src="/game.js"></script>

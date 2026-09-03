@@ -11,11 +11,12 @@ const MIME_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
 };
 
 const ASSETS = new Map(
     await Promise.all(
-        ["index.html", "styles.css", "game.js"].map(async (name) => [
+        ["index.html", "styles.css", "game.js", "fairness.mjs"].map(async (name) => [
             `/${name === "index.html" ? "" : name}`,
             {
                 body: await readFile(join(PUBLIC_ROOT, name)),
@@ -83,6 +84,11 @@ export async function createGameServer({
         speed: 1,
         shields: 0,
         slowMotion: false,
+        dashCooldown: 0,
+        dashActive: false,
+        overdriveEnergy: 0,
+        overdriveRemaining: 0,
+        nearMisses: 0,
         paused: false,
         difficulty: profile.difficulty,
         highScore: profile.highScore,
@@ -171,6 +177,13 @@ export async function createGameServer({
                     input.shields < 0 ||
                     input.shields > 9 ||
                     typeof input.slowMotion !== "boolean" ||
+                    !isFiniteNumber(input.dashCooldown, 0, 10) ||
+                    typeof input.dashActive !== "boolean" ||
+                    !isFiniteNumber(input.overdriveEnergy, 0, 100) ||
+                    !isFiniteNumber(input.overdriveRemaining, 0, 30) ||
+                    !Number.isSafeInteger(input.nearMisses) ||
+                    input.nearMisses < 0 ||
+                    input.nearMisses > 1_000_000 ||
                     typeof input.paused !== "boolean" ||
                     typeof input.soundEnabled !== "boolean"
                 ) {
@@ -186,6 +199,11 @@ export async function createGameServer({
                     speed: input.speed,
                     shields: input.shields,
                     slowMotion: input.slowMotion,
+                    dashCooldown: input.dashCooldown,
+                    dashActive: input.dashActive,
+                    overdriveEnergy: input.overdriveEnergy,
+                    overdriveRemaining: input.overdriveRemaining,
+                    nearMisses: input.nearMisses,
                     paused: input.paused,
                     highScore,
                     soundEnabled: input.soundEnabled,
@@ -292,6 +310,11 @@ export async function createGameServer({
                 speed: 1,
                 shields: 0,
                 slowMotion: false,
+                dashCooldown: 0,
+                dashActive: false,
+                overdriveEnergy: 0,
+                overdriveRemaining: 0,
+                nearMisses: 0,
                 paused: false,
             });
             broadcast("command", { name: "restart" });
@@ -306,6 +329,11 @@ export async function createGameServer({
                 speed: 1,
                 shields: 0,
                 slowMotion: false,
+                dashCooldown: 0,
+                dashActive: false,
+                overdriveEnergy: 0,
+                overdriveRemaining: 0,
+                nearMisses: 0,
                 paused: false,
             });
             broadcast("command", { name: "set-difficulty", difficulty });

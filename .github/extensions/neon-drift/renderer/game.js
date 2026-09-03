@@ -1,6 +1,18 @@
+import {
+    PLAYER_LATERAL_SPEED,
+    PLAYER_RADIUS,
+    createHazardScheduler,
+} from "/fairness.mjs";
+
 const canvas = document.querySelector("#gameCanvas");
 const context = canvas.getContext("2d", { alpha: false });
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const DASH_DURATION = 0.2;
+const DASH_COOLDOWN = 1.55;
+const DASH_DISTANCE = 118;
+const NEAR_MISS_DISTANCE = 17;
+const OVERDRIVE_DURATION = 6;
+const OVERDRIVE_CHARGE_PER_NEAR_MISS = 22;
 
 const elements = {
     score: document.querySelector("#scoreValue"),
@@ -14,16 +26,22 @@ const elements = {
     gameOver: document.querySelector("#gameOverPanel"),
     finalScore: document.querySelector("#finalScore"),
     finalCombo: document.querySelector("#finalCombo"),
+    finalNearMisses: document.querySelector("#finalNearMisses"),
     pauseButton: document.querySelector("#pauseButton"),
     soundButton: document.querySelector("#soundButton"),
+    dashButton: document.querySelector("#dashButton"),
+    dashMeter: document.querySelector("#dashMeter"),
+    overdriveButton: document.querySelector("#overdriveButton"),
+    overdriveMeter: document.querySelector("#overdriveMeter"),
+    overdriveLabel: document.querySelector("#overdriveLabel"),
     difficultyLabel: document.querySelector("#difficultyLabel"),
     speedLabel: document.querySelector("#speedLabel"),
 };
 
 const DIFFICULTY = {
-    relaxed: { baseSpeed: 215, hazardRate: 1.12, acceleration: 2.1, label: "RELAXED" },
-    standard: { baseSpeed: 245, hazardRate: 0.9, acceleration: 2.8, label: "STANDARD" },
-    overdrive: { baseSpeed: 285, hazardRate: 0.72, acceleration: 3.7, label: "OVERDRIVE" },
+    relaxed: { baseSpeed: 215, acceleration: 2.1, label: "RELAXED" },
+    standard: { baseSpeed: 245, acceleration: 2.8, label: "STANDARD" },
+    overdrive: { baseSpeed: 285, acceleration: 3.7, label: "OVERDRIVE" },
 };
 
 const state = {
@@ -39,6 +57,11 @@ const state = {
     speedFactor: 1,
     shields: 0,
     slowMotion: 0,
+    dashCooldown: 0,
+    dashActive: 0,
+    overdriveEnergy: 0,
+    overdriveRemaining: 0,
+    nearMisses: 0,
     soundEnabled: true,
     runStartedPending: false,
     connectionWarning: false,
@@ -49,13 +72,20 @@ const world = {
     height: 0,
     dpr: 1,
     time: 0,
-    hazardClock: 0,
     shardClock: 0,
     pickupClock: 0,
+    hazardScheduler: null,
     stars: [],
     entities: [],
     particles: [],
-    player: { x: 0, targetX: 0, y: 0, radius: 14, tilt: 0 },
+    player: {
+        x: 0,
+        targetX: 0,
+        y: 0,
+        radius: PLAYER_RADIUS,
+        tilt: 0,
+        lastDirection: 1,
+    },
 };
 
 const input = {
@@ -82,6 +112,7 @@ function formatScore(value) {
 
 function resize() {
     const rect = canvas.getBoundingClientRect();
+    const previousWidth = world.width;
     world.dpr = Math.min(devicePixelRatio || 1, 2);
     world.width = Math.max(320, rect.width);
     world.height = Math.max(250, rect.height);
@@ -92,7 +123,15 @@ function resize() {
     if (!world.player.x) {
         world.player.x = world.width / 2;
         world.player.targetX = world.player.x;
+    } else if (previousWidth > 0 && previousWidth !== world.width) {
+        const scale = world.width / previousWidth;
+        world.player.x *= scale;
+        world.player.targetX *= scale;
+        world.entities = world.entities
+            .filter((entity) => entity.kind !== "hazard" && entity.kind !== "gate")
+            .map((entity) => ({ ...entity, x: entity.x * scale }));
     }
+    resetHazardPlan(state.phase === "playing" ? world.height * 1.15 : 0);
     createStars();
 }
 
@@ -147,10 +186,54 @@ function updateHud() {
     elements.pauseButton.setAttribute("aria-label", state.phase === "paused" ? "Resume game" : "Pause game");
     elements.soundButton.setAttribute("aria-pressed", state.soundEnabled ? "false" : "true");
     elements.soundButton.setAttribute("aria-label", state.soundEnabled ? "Mute sound" : "Enable sound");
+    const dashReady = state.dashCooldown <= 0 && state.phase === "playing";
+    const overdriveReady =
+        state.overdriveEnergy >= 100 &&
+        state.overdriveRemaining <= 0 &&
+        state.phase === "playing";
+    const overdriveActive = state.overdriveRemaining > 0;
+    elements.dashMeter.style.transform = `scaleX(${clamp(
+        1 - state.dashCooldown / DASH_COOLDOWN,
+        0,
+        1,
+    )})`;
+    elements.dashButton.disabled = !dashReady;
+    elements.dashButton.classList.toggle("ready", dashReady);
+    elements.dashButton.setAttribute(
+        "aria-label",
+        state.phase !== "playing"
+            ? "Dash available during a run"
+            : dashReady
+            ? "Dash ready"
+            : `Dash recharging, ${Math.max(0, state.dashCooldown).toFixed(1)} seconds`,
+    );
+    elements.overdriveMeter.style.transform = `scaleX(${
+        overdriveActive
+            ? clamp(state.overdriveRemaining / OVERDRIVE_DURATION, 0, 1)
+            : clamp(state.overdriveEnergy / 100, 0, 1)
+    })`;
+    elements.overdriveButton.disabled = !overdriveReady;
+    elements.overdriveButton.classList.toggle("ready", overdriveReady);
+    elements.overdriveLabel.textContent = overdriveActive
+        ? `OVERDRIVE ${state.overdriveRemaining.toFixed(1)}`
+        : "OVERDRIVE";
+    elements.overdriveButton.setAttribute(
+        "aria-label",
+        overdriveActive
+            ? `Overdrive active, ${state.overdriveRemaining.toFixed(1)} seconds remaining`
+            : state.phase !== "playing"
+              ? "Overdrive available during a run"
+            : overdriveReady
+              ? "Activate Overdrive"
+              : `Overdrive ${Math.floor(state.overdriveEnergy)} percent charged`,
+    );
+    document.body.classList.toggle("overdrive-active", overdriveActive);
 
     const statuses = [];
     if (state.shields > 0) statuses.push(`SHIELD ×${state.shields}`);
     if (state.slowMotion > 0) statuses.push(`TIME COIL ${state.slowMotion.toFixed(1)}s`);
+    if (state.dashActive > 0) statuses.push("PHASE DASH");
+    if (overdriveActive) statuses.push(`OVERDRIVE ×2 ${state.overdriveRemaining.toFixed(1)}s`);
     elements.pickup.textContent = statuses.join("  ·  ");
 }
 
@@ -158,6 +241,9 @@ function setDifficulty(difficulty, persist = true) {
     if (!DIFFICULTY[difficulty]) return;
     state.difficulty = difficulty;
     document.querySelector(`input[name="difficulty"][value="${difficulty}"]`).checked = true;
+    if (world.width > 0) {
+        resetHazardPlan();
+    }
     updateHud();
     if (persist) {
         fetch("/api/settings", {
@@ -192,6 +278,10 @@ function sound(kind) {
         shield: [170, 90, 0.22, "sawtooth"],
         crash: [100, 38, 0.34, "sawtooth"],
         launch: [220, 520, 0.18, "triangle"],
+        dash: [180, 760, 0.13, "sawtooth"],
+        nearMiss: [840, 1160, 0.09, "sine"],
+        overdrive: [140, 980, 0.42, "sawtooth"],
+        overdriveEnd: [620, 220, 0.18, "triangle"],
     };
     const [from, to, duration, type] = sounds[kind];
     oscillator.type = type;
@@ -205,6 +295,38 @@ function sound(kind) {
     oscillator.stop(now + duration);
 }
 
+function triggerDash() {
+    if (state.phase !== "playing" || state.dashCooldown > 0) return;
+    const heldDirection = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const pointerDirection = Math.sign(world.player.targetX - world.player.x);
+    const direction = heldDirection || pointerDirection || world.player.lastDirection || 1;
+    world.player.lastDirection = direction;
+    world.player.targetX += direction * Math.min(DASH_DISTANCE, world.width * 0.24);
+    state.dashActive = DASH_DURATION;
+    state.dashCooldown = DASH_COOLDOWN;
+    burst(world.player.x, world.player.y, "#38f6ff", 18);
+    sound("dash");
+    announce("Phase dash");
+    updateHud();
+}
+
+function activateOverdrive() {
+    if (
+        state.phase !== "playing" ||
+        state.overdriveEnergy < 100 ||
+        state.overdriveRemaining > 0
+    ) {
+        return;
+    }
+    state.overdriveEnergy = 0;
+    state.overdriveRemaining = OVERDRIVE_DURATION;
+    state.comboLife = Math.max(state.comboLife, OVERDRIVE_DURATION);
+    burst(world.player.x, world.player.y, "#ff3bd4", 28);
+    sound("overdrive");
+    announce("Overdrive engaged. Double scoring.");
+    updateHud();
+}
+
 function resetRun() {
     state.phase = "playing";
     state.score = 0;
@@ -216,20 +338,42 @@ function resetRun() {
     state.speedFactor = 1;
     state.shields = 0;
     state.slowMotion = 0;
+    state.dashCooldown = 0;
+    state.dashActive = 0;
+    state.overdriveEnergy = 0;
+    state.overdriveRemaining = 0;
+    state.nearMisses = 0;
     state.runStartedPending = true;
     world.entities.length = 0;
     world.particles.length = 0;
-    world.hazardClock = 0.5;
-    world.shardClock = 0.1;
-    world.pickupClock = 10;
     world.player.x = world.width / 2;
     world.player.targetX = world.player.x;
+    resetHazardPlan();
+    world.shardClock = 0.1;
+    world.pickupClock = 10;
     setPanel(null);
     updateHud();
     announce("Run started");
     sound("launch");
     canvas.focus();
     syncState(true);
+}
+
+function resetHazardPlan(minimumDistance = 0) {
+    world.hazardScheduler = createHazardScheduler({
+        width: world.width,
+        difficulty: state.difficulty,
+        playerRadius: world.player.radius,
+        lateralSpeed: PLAYER_LATERAL_SPEED,
+        initialSafeCenter: world.player.x,
+    });
+    const planningSpeed =
+        DIFFICULTY[state.difficulty].baseSpeed * state.speedFactor;
+    world.hazardScheduler.reset({
+        planningSpeed,
+        elapsed: state.elapsed,
+        minimumDistance,
+    });
 }
 
 function pauseGame(force) {
@@ -251,9 +395,13 @@ function gameOver() {
     state.highScore = Math.max(state.highScore, Math.floor(state.score));
     elements.finalScore.textContent = formatScore(state.score);
     elements.finalCombo.textContent = `×${state.bestCombo}`;
+    elements.finalNearMisses.textContent = state.nearMisses.toString();
+    state.dashActive = 0;
+    state.overdriveRemaining = 0;
     setPanel(elements.gameOver);
     announce(`Run over. Score ${Math.floor(state.score)}. Best combo ${state.bestCombo}.`);
     sound("crash");
+    updateHud();
     syncState(true);
 }
 
@@ -263,24 +411,13 @@ function laneX(lane) {
     return left + tunnelWidth * ((lane + 0.5) / 6);
 }
 
-function spawnHazard() {
-    const lane = Math.floor(Math.random() * 6);
-    if (Math.random() < 0.28 && state.elapsed > 14) {
+function spawnHazardWave(wave) {
+    for (const entity of wave.entities) {
         world.entities.push({
-            kind: "gate",
-            x: 0,
-            y: -40,
-            gapX: laneX(lane),
-            gapWidth: Math.max(62, world.width * 0.105),
-            height: 22,
-        });
-    } else {
-        world.entities.push({
-            kind: "hazard",
-            x: laneX(lane),
-            y: -35,
-            radius: random(18, 25),
-            rotation: Math.random() * Math.PI,
+            ...entity,
+            nearMissClearance: Number.POSITIVE_INFINITY,
+            nearMissEligible: true,
+            nearMissAwarded: false,
         });
     }
 }
@@ -344,13 +481,83 @@ function collides(entity) {
     return Math.hypot(dx, dy) < player.radius + entity.radius;
 }
 
+function hazardClearance(entity) {
+    const player = world.player;
+    if (entity.kind === "gate") {
+        const gapLeft = entity.gapX - entity.gapWidth / 2;
+        const gapRight = entity.gapX + entity.gapWidth / 2;
+        return Math.min(
+            player.x - player.radius - gapLeft,
+            gapRight - player.x - player.radius,
+        );
+    }
+    return (
+        Math.hypot(player.x - entity.x, player.y - entity.y) -
+        player.radius -
+        entity.radius
+    );
+}
+
+function trackNearMiss(entity) {
+    if (entity.nearMissAwarded || !entity.nearMissEligible) return;
+    const player = world.player;
+    const verticalSpan = entity.kind === "gate" ? entity.height : entity.radius * 2;
+    const nearVertical =
+        entity.kind === "gate"
+            ? player.y + player.radius + NEAR_MISS_DISTANCE >= entity.y &&
+              player.y - player.radius - NEAR_MISS_DISTANCE <=
+                  entity.y + entity.height
+            : Math.abs(player.y - entity.y) <=
+              player.radius + entity.radius + NEAR_MISS_DISTANCE;
+
+    if (nearVertical) {
+        if (state.dashActive > 0) {
+            entity.nearMissEligible = false;
+            return;
+        }
+        const clearance = hazardClearance(entity);
+        if (clearance > 0) {
+            entity.nearMissClearance = Math.min(
+                entity.nearMissClearance,
+                clearance,
+            );
+        }
+    }
+
+    if (
+        entity.y > player.y + verticalSpan + player.radius &&
+        entity.nearMissClearance > 0 &&
+        entity.nearMissClearance <= NEAR_MISS_DISTANCE
+    ) {
+        entity.nearMissAwarded = true;
+        state.nearMisses += 1;
+        if (state.overdriveRemaining <= 0) {
+            state.overdriveEnergy = Math.min(
+                100,
+                state.overdriveEnergy + OVERDRIVE_CHARGE_PER_NEAR_MISS,
+            );
+        }
+        state.score += 60 * (state.overdriveRemaining > 0 ? 2 : 1);
+        burst(player.x, player.y, "#ff3bd4", 10);
+        sound("nearMiss");
+        announce(
+            state.overdriveRemaining > 0
+                ? "Near miss. Overdrive scoring sustained."
+                : state.overdriveEnergy >= 100
+                ? "Near miss. Overdrive ready."
+                : `Near miss. Overdrive ${Math.floor(state.overdriveEnergy)} percent.`,
+        );
+    }
+}
+
 function collect(entity) {
     if (entity.kind === "shard") {
         state.comboChain += 1;
         state.combo = Math.min(8, 1 + Math.floor(state.comboChain / 3));
         state.bestCombo = Math.max(state.bestCombo, state.combo);
         state.comboLife = 3.2;
-        state.score += 75 * state.combo;
+        state.score +=
+            75 * state.combo * (state.overdriveRemaining > 0 ? 2 : 1);
         burst(entity.x, entity.y, "#38f6ff", 12);
         sound("shard");
         if (state.combo > 1) announce(`Sync multiplier ${state.combo}`);
@@ -372,6 +579,14 @@ function collect(entity) {
 }
 
 function hitHazard(entity) {
+    entity.nearMissEligible = false;
+    if (state.dashActive > 0) {
+        entity.dead = true;
+        state.dashActive = 0;
+        state.score += 35 * (state.overdriveRemaining > 0 ? 2 : 1);
+        burst(world.player.x, world.player.y, "#38f6ff", 18);
+        return;
+    }
     if (state.shields > 0) {
         state.shields -= 1;
         state.combo = 1;
@@ -391,28 +606,45 @@ function update(dt) {
     const tuning = DIFFICULTY[state.difficulty];
     state.elapsed += dt;
     state.slowMotion = Math.max(0, state.slowMotion - dt);
+    state.dashCooldown = Math.max(0, state.dashCooldown - dt);
+    state.dashActive = Math.max(0, state.dashActive - dt);
+    const hadOverdrive = state.overdriveRemaining > 0;
+    state.overdriveRemaining = Math.max(0, state.overdriveRemaining - dt);
+    if (hadOverdrive && state.overdriveRemaining === 0) {
+        sound("overdriveEnd");
+        announce("Overdrive ended. Charge restored to zero.");
+    }
     state.speedFactor = 1 + Math.min(1.85, (state.elapsed * tuning.acceleration) / 100);
     const timeScale = state.slowMotion > 0 ? 0.58 : 1;
-    const travelSpeed = tuning.baseSpeed * state.speedFactor * timeScale;
+    const planningSpeed = tuning.baseSpeed * state.speedFactor;
+    const travelSpeed = planningSpeed * timeScale;
 
     const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const before = world.player.x;
     if (steer !== 0) {
-        world.player.targetX += steer * 440 * dt;
+        world.player.lastDirection = steer;
+        world.player.x += steer * PLAYER_LATERAL_SPEED * dt;
+        world.player.targetX = world.player.x;
+    } else {
+        world.player.x +=
+            (world.player.targetX - world.player.x) * Math.min(1, dt * 11);
     }
     const margin = Math.max(28, world.width * 0.08);
+    world.player.x = clamp(world.player.x, margin, world.width - margin);
     world.player.targetX = clamp(world.player.targetX, margin, world.width - margin);
-    const before = world.player.x;
-    world.player.x += (world.player.targetX - world.player.x) * Math.min(1, dt * 11);
     world.player.tilt +=
         (clamp((world.player.x - before) * 0.07, -0.5, 0.5) - world.player.tilt) *
         Math.min(1, dt * 10);
 
-    world.hazardClock -= dt;
     world.shardClock -= dt;
     world.pickupClock -= dt;
-    if (world.hazardClock <= 0) {
-        spawnHazard();
-        world.hazardClock = tuning.hazardRate / Math.pow(state.speedFactor, 0.65);
+    const hazardWaves = world.hazardScheduler.advance({
+        distance: travelSpeed * dt,
+        planningSpeed,
+        elapsed: state.elapsed,
+    });
+    for (const wave of hazardWaves) {
+        spawnHazardWave(wave);
     }
     if (world.shardClock <= 0) {
         spawnShardChain();
@@ -431,7 +663,12 @@ function update(dt) {
         }
     }
 
-    state.score += dt * 20 * state.speedFactor * state.combo;
+    state.score +=
+        dt *
+        20 *
+        state.speedFactor *
+        state.combo *
+        (state.overdriveRemaining > 0 ? 2 : 1);
     for (const star of world.stars) {
         star.y += travelSpeed * star.depth * dt * 0.35;
         if (star.y > world.height) {
@@ -443,6 +680,9 @@ function update(dt) {
     for (const entity of world.entities) {
         entity.y += travelSpeed * dt;
         entity.rotation = (entity.rotation ?? 0) + dt * 2.4;
+        if (entity.kind === "hazard" || entity.kind === "gate") {
+            trackNearMiss(entity);
+        }
         if (!entity.dead && collides(entity)) {
             if (entity.kind === "hazard" || entity.kind === "gate") {
                 hitHazard(entity);
@@ -451,6 +691,7 @@ function update(dt) {
                 entity.dead = true;
             }
         }
+        if (state.phase === "gameover") break;
         if (
             entity.kind === "shard" &&
             entity.y > world.player.y + 90 &&
@@ -619,6 +860,18 @@ function drawPlayer() {
     context.save();
     context.translate(player.x, player.y);
     context.rotate(player.tilt);
+    if (state.dashActive > 0 && !reducedMotion) {
+        context.strokeStyle = "rgba(56, 246, 255, 0.5)";
+        context.lineWidth = 3;
+        context.shadowBlur = 16;
+        context.shadowColor = "#38f6ff";
+        for (let index = 0; index < 3; index += 1) {
+            context.beginPath();
+            context.moveTo(-28 - index * 15, 7 + index * 5);
+            context.lineTo(-8, 7 + index * 2);
+            context.stroke();
+        }
+    }
     if (state.shields > 0) {
         context.strokeStyle = "rgba(186, 255, 104, 0.72)";
         context.lineWidth = 2;
@@ -629,8 +882,10 @@ function drawPlayer() {
         context.stroke();
     }
     context.shadowBlur = 24;
-    context.shadowColor = "#38f6ff";
-    context.fillStyle = "#dffcff";
+    context.shadowColor =
+        state.overdriveRemaining > 0 ? "#ff3bd4" : "#38f6ff";
+    context.fillStyle =
+        state.overdriveRemaining > 0 ? "#fff0fc" : "#dffcff";
     context.beginPath();
     context.moveTo(0, -19);
     context.lineTo(12, 13);
@@ -665,6 +920,10 @@ function draw() {
         context.fillStyle = "rgba(255, 59, 212, 0.025)";
         context.fillRect(0, 0, world.width, world.height);
     }
+    if (state.overdriveRemaining > 0) {
+        context.fillStyle = "rgba(255, 59, 212, 0.045)";
+        context.fillRect(0, 0, world.width, world.height);
+    }
 }
 
 function frame(now) {
@@ -684,6 +943,11 @@ function syncState(immediate = false) {
         speed: Number(state.speedFactor.toFixed(2)),
         shields: state.shields,
         slowMotion: state.slowMotion > 0,
+        dashCooldown: Number(state.dashCooldown.toFixed(2)),
+        dashActive: state.dashActive > 0,
+        overdriveEnergy: Number(state.overdriveEnergy.toFixed(1)),
+        overdriveRemaining: Number(state.overdriveRemaining.toFixed(2)),
+        nearMisses: state.nearMisses,
         paused: state.phase === "paused",
         soundEnabled: state.soundEnabled,
         runStarted: state.runStartedPending,
@@ -737,6 +1001,8 @@ document.querySelector("#retryButton").addEventListener("click", resetRun);
 document.querySelector("#restartButton").addEventListener("click", resetRun);
 document.querySelector("#resumeButton").addEventListener("click", () => pauseGame(false));
 elements.pauseButton.addEventListener("click", () => pauseGame());
+elements.dashButton.addEventListener("click", triggerDash);
+elements.overdriveButton.addEventListener("click", activateOverdrive);
 elements.soundButton.addEventListener("click", () => {
     state.soundEnabled = !state.soundEnabled;
     updateHud();
@@ -770,12 +1036,29 @@ canvas.addEventListener("pointerup", () => {
 canvas.addEventListener("pointercancel", () => {
     input.pointerActive = false;
 });
+canvas.addEventListener("dblclick", (event) => {
+    pointerTarget(event);
+    triggerDash();
+});
 
 bindHoldButton("#touchLeft", "left");
 bindHoldButton("#touchRight", "right");
 
 addEventListener("keydown", (event) => {
-    if (["ArrowLeft", "ArrowRight", " ", "a", "A", "d", "D"].includes(event.key)) {
+    if (
+        [
+            "ArrowLeft",
+            "ArrowRight",
+            " ",
+            "a",
+            "A",
+            "d",
+            "D",
+            "Shift",
+            "q",
+            "Q",
+        ].includes(event.key)
+    ) {
         event.preventDefault();
     }
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") input.left = true;
@@ -786,6 +1069,8 @@ addEventListener("keydown", (event) => {
     }
     if (event.key.toLowerCase() === "r") resetRun();
     if (event.key.toLowerCase() === "m") elements.soundButton.click();
+    if (event.key === "Shift" && !event.repeat) triggerDash();
+    if (event.key.toLowerCase() === "q" && !event.repeat) activateOverdrive();
 });
 addEventListener("keyup", (event) => {
     if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") input.left = false;

@@ -46,7 +46,7 @@ const canvas = createCanvas({
         {
             name: "get_status",
             description:
-                "Get the current run state, score, combo, speed, pickup status, difficulty, and high score.",
+                "Get the current run state, score, combo, speed, dash cooldown, Overdrive charge, near misses, pickup status, difficulty, and high score.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,
